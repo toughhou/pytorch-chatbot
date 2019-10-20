@@ -16,10 +16,11 @@ class EncoderRNN(nn.Module):
                           dropout=(0 if n_layers == 1 else dropout), bidirectional=True)
 
     def forward(self, input_seq, input_lengths, hidden=None):
-        embedded = self.embedding(input_seq)
-        packed = torch.nn.utils.rnn.pack_padded_sequence(embedded, input_lengths)
-        outputs, hidden = self.gru(packed, hidden) # output: (seq_len, batch, hidden*n_dir)
-        outputs, _ = torch.nn.utils.rnn.pad_packed_sequence(outputs)
+        embedded = self.embedding(input_seq)    # (15, 64, 512) (T, B, D)
+        # packed = torch.nn.utils.rnn.pack_padded_sequence(embedded, input_lengths)   # (434, 512) (15)
+        packed = embedded
+        outputs, hidden = self.gru(packed, hidden) # output: (seq_len, batch, hidden*n_dir) outputs.data: (434, 1024) hidden: (2, batch, dim) (2,64,512)
+        # outputs, _ = torch.nn.utils.rnn.pad_packed_sequence(outputs) # (15, 64, 1024)
         outputs = outputs[:, :, :self.hidden_size] + outputs[:, : ,self.hidden_size:] # Sum bidirectional outputs (1, batch, hidden)
         return outputs, hidden
 
@@ -52,8 +53,8 @@ class Attn(nn.Module):
             for i in range(max_len):
                 attn_energies[b, i] = self.score(hidden[:, b], encoder_outputs[i, b].unsqueeze(0))
 
-        # Normalize energies to weights in range 0 to 1, resize to 1 x B x S
-        return F.softmax(attn_energies, dim=1).unsqueeze(1)
+        # Normalize energies to weights in range 0 to 1, resize to B x 1 x S
+        return F.softmax(attn_energies, dim=1).unsqueeze(1) # (64, 1, 15)
 
     def score(self, hidden, encoder_output):
         # hidden [1, 512], encoder_output [1, 512]
@@ -107,9 +108,9 @@ class LuongAttnDecoderRNN(nn.Module):
 
         # Calculate attention from current RNN state and all encoder outputs;
         # apply to encoder outputs to get weighted average
-        attn_weights = self.attn(rnn_output, encoder_outputs) #[64, 1, 14]
-        # encoder_outputs [14, 64, 512]
-        context = attn_weights.bmm(encoder_outputs.transpose(0, 1)) #[64, 1, 512]
+        attn_weights = self.attn(rnn_output, encoder_outputs) #[64, 1, 15]
+        # encoder_outputs [15, 64, 512]
+        context = attn_weights.bmm(encoder_outputs.transpose(0, 1)) # [64, 1, 512]
 
         # Attentional vector using the RNN hidden state and context vector
         # concatenated together (Luong eq. 5)
@@ -119,7 +120,7 @@ class LuongAttnDecoderRNN(nn.Module):
         concat_output = torch.tanh(self.concat(concat_input)) #[64, 512]
 
         # Finally predict next token (Luong eq. 6, without softmax)
-        output = self.out(concat_output) #[64, output_size]
+        output = self.out(concat_output) #[64, output_size] (64, 92383)
 
         # Return final output, hidden state, and attention weights (for visualization)
         return output, hidden, attn_weights

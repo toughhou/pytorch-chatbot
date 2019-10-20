@@ -1,3 +1,4 @@
+import os
 import argparse
 from train import trainIters
 from evaluate import runTest
@@ -52,5 +53,7 @@ def run(args):
 
 
 if __name__ == '__main__':
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '1,3'
+
     args = parse()
     run(args)

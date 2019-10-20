@@ -8,13 +8,14 @@ from model import *
 USE_CUDA = torch.cuda.is_available()
 device = torch.device("cuda" if USE_CUDA else "cpu")
 
+
 class Sentence:
     def __init__(self, decoder_hidden, last_idx=SOS_token, sentence_idxes=[], sentence_scores=[]):
-        if(len(sentence_idxes) != len(sentence_scores)):
+        if (len(sentence_idxes) != len(sentence_scores)):
             raise ValueError("length of indexes and scores should be the same")
         self.decoder_hidden = decoder_hidden
         self.last_idx = last_idx
-        self.sentence_idxes =  sentence_idxes
+        self.sentence_idxes = sentence_idxes
         self.sentence_scores = sentence_scores
 
     def avgScore(self):
@@ -29,10 +30,10 @@ class Sentence:
         for i in range(beam_size):
             if topi[0][i] == EOS_token:
                 terminates.append(([voc.index2word[idx.item()] for idx in self.sentence_idxes] + ['<EOS>'],
-                                   self.avgScore())) # tuple(word_list, score_float
+                                   self.avgScore()))  # tuple(word_list, score_float
                 continue
-            idxes = self.sentence_idxes[:] # pass by value
-            scores = self.sentence_scores[:] # pass by value
+            idxes = self.sentence_idxes[:]  # pass by value
+            scores = self.sentence_scores[:]  # pass by value
             idxes.append(topi[0][i])
             scores.append(topv[0][i])
             sentences.append(Sentence(decoder_hidden, topi[0][i], idxes, scores))
@@ -48,6 +49,7 @@ class Sentence:
         if self.sentence_idxes[-1] != EOS_token:
             words.append('<EOS>')
         return (words, self.avgScore())
+
 
 def beam_decode(decoder, decoder_hidden, encoder_outputs, voc, beam_size, max_length=MAX_LENGTH):
     terminal_sentences, prev_top_sentences, next_top_sentences = [], [], []
@@ -76,13 +78,13 @@ def beam_decode(decoder, decoder_hidden, encoder_outputs, voc, beam_size, max_le
     n = min(len(terminal_sentences), 15)
     return terminal_sentences[:n]
 
-def decode(decoder, decoder_hidden, encoder_outputs, voc, max_length=MAX_LENGTH):
 
+def decode(decoder, decoder_hidden, encoder_outputs, voc, max_length=MAX_LENGTH):
     decoder_input = torch.LongTensor([[SOS_token]])
     decoder_input = decoder_input.to(device)
 
     decoded_words = []
-    decoder_attentions = torch.zeros(max_length, max_length) #TODO: or (MAX_LEN+1, MAX_LEN+1)
+    decoder_attentions = torch.zeros(max_length, max_length)  # TODO: or (MAX_LEN+1, MAX_LEN+1)
 
     for di in range(max_length):
         decoder_output, decoder_hidden, decoder_attn = decoder(
@@ -103,7 +105,7 @@ def decode(decoder, decoder_hidden, encoder_outputs, voc, max_length=MAX_LENGTH)
 
 
 def evaluate(encoder, decoder, voc, sentence, beam_size, max_length=MAX_LENGTH):
-    indexes_batch = [indexesFromSentence(voc, sentence)] #[1, seq_len]
+    indexes_batch = [indexesFromSentence(voc, sentence)]  # [1, seq_len]
     lengths = [len(indexes) for indexes in indexes_batch]
     input_batch = torch.LongTensor(indexes_batch).transpose(0, 1)
     input_batch = input_batch.to(device)
@@ -136,9 +138,10 @@ def evaluateRandomly(encoder, decoder, voc, pairs, reverse, beam_size, n=10):
                 output_sentence = ' '.join(output_words)
                 print("{:.3f} < {}".format(score, output_sentence))
 
+
 def evaluateInput(encoder, decoder, voc, beam_size):
     pair = ''
-    while(1):
+    while (1):
         try:
             pair = input('> ')
             if pair == 'q': break

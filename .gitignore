@@ -101,5 +101,5 @@ ENV/
 .mypy_cache/
 
 save
-data
-*.sh
+#data
+#*.sh

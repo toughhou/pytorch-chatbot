@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 import torch.backends.cudnn as cudnn
+from torch.utils.data import Dataset, DataLoader
 
 import itertools
 import random
@@ -14,19 +15,31 @@ from load import SOS_token, EOS_token, PAD_token
 from model import EncoderRNN, LuongAttnDecoderRNN
 from config import MAX_LENGTH, teacher_forcing_ratio, save_dir
 
-USE_CUDA = torch.cuda.is_available()
-device = torch.device("cuda" if USE_CUDA else "cpu")
+# device_ids = [1,3]
+# device_ids = range(torch.cuda.device_count())
+# def_cuda_device = "cuda:" + str(device_ids[0])
+# device = torch.device(def_cuda_device if torch.cuda.device_count()>0 else "cpu")
+# device = torch.device("cuda" if torch.cuda.device_count()>0 else "cpu")
+
+# os.environ['CUDA_VISIBLE_DEVICES'] = '1,3'
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+print(device)
+print("GPUs: ", torch.cuda.device_count())
 
 cudnn.benchmark = True
+
+
 #############################################
 # generate file name for saving parameters
 #############################################
 def filename(reverse, obj):
-	filename = ''
-	if reverse:
-		filename += 'reverse_'
-	filename += obj
-	return filename
+    filename = ''
+    if reverse:
+        filename += 'reverse_'
+    filename += obj
+    return filename
 
 
 #############################################
@@ -35,9 +48,11 @@ def filename(reverse, obj):
 def indexesFromSentence(voc, sentence):
     return [voc.word2index[word] for word in sentence.split(' ')] + [EOS_token]
 
+
 # batch_first: true -> false, i.e. shape: seq_len * batch
 def zeroPadding(l, fillvalue=PAD_token):
     return list(itertools.zip_longest(*l, fillvalue=fillvalue))
+
 
 def binaryMatrix(l, value=PAD_token):
     m = []
@@ -50,6 +65,7 @@ def binaryMatrix(l, value=PAD_token):
                 m[i].append(1)
     return m
 
+
 # convert to index, add EOS
 # return input pack_padded_sequence
 def inputVar(l, voc):
@@ -58,6 +74,7 @@ def inputVar(l, voc):
     padList = zeroPadding(indexes_batch)
     padVar = torch.LongTensor(padList)
     return padVar, lengths
+
 
 # convert to index, add EOS, zero padding
 # return output variable, mask, max length of the sentences in batch
@@ -69,6 +86,7 @@ def outputVar(l, voc):
     mask = torch.ByteTensor(mask)
     padVar = torch.LongTensor(padList)
     return padVar, mask, max_target_len
+
 
 # pair_batch is a list of (input, output) with length batch_size
 # sort list of (input, output) pairs by input length, reverse input
@@ -85,13 +103,13 @@ def batch2TrainData(voc, pair_batch, reverse):
     output, mask, max_target_len = outputVar(output_batch, voc)
     return inp, lengths, output, mask, max_target_len
 
+
 #############################################
 # Training
 #############################################
 
 def train(input_variable, lengths, target_variable, mask, max_target_len, encoder, decoder, embedding,
           encoder_optimizer, decoder_optimizer, batch_size, max_length=MAX_LENGTH):
-
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
 
@@ -103,12 +121,13 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
     print_losses = []
     n_totals = 0
 
-    encoder_outputs, encoder_hidden = encoder(input_variable, lengths, None)
+    encoder_outputs, encoder_hidden = encoder(input_variable, lengths, None)  # (15, 64, 512) (2, 64, 512)
 
     decoder_input = torch.LongTensor([[SOS_token for _ in range(batch_size)]])
     decoder_input = decoder_input.to(device)
 
-    decoder_hidden = encoder_hidden[:decoder.n_layers]
+    # decoder_hidden = encoder_hidden[:decoder.n_layers]  # (2, 64, 512)
+    decoder_hidden = encoder_hidden[:decoder.module.n_layers]  # (2, 64, 512)
 
     use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
 
@@ -117,15 +136,17 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
         for t in range(max_target_len):
             decoder_output, decoder_hidden, _ = decoder(
                 decoder_input, decoder_hidden, encoder_outputs
-            )
-            decoder_input = target_variable[t].view(1, -1) # Next input is current target
+            )  # decoder_output: (64, 92383)   decoder_hidden: (1, 64, 512)
+
+            # target_variable: (15, 64)   decoder_input: (1, 64)
+            decoder_input = target_variable[t].view(1, -1)  # Next input is current target
             loss += F.cross_entropy(decoder_output, target_variable[t], ignore_index=EOS_token)
     else:
         for t in range(max_target_len):
             decoder_output, decoder_hidden, decoder_attn = decoder(
                 decoder_input, decoder_hidden, encoder_outputs
             )
-            _, topi = decoder_output.topk(1) # [64, 1]
+            _, topi = decoder_output.topk(1)  # [64, 1]
 
             decoder_input = torch.LongTensor([[topi[i][0] for i in range(batch_size)]])
             decoder_input = decoder_input.to(device)
@@ -140,12 +161,11 @@ def train(input_variable, lengths, target_variable, mask, max_target_len, encode
     encoder_optimizer.step()
     decoder_optimizer.step()
 
-    return loss.item() / max_target_len 
+    return loss.item() / max_target_len
 
 
 def trainIters(corpus, reverse, n_iteration, learning_rate, batch_size, n_layers, hidden_size,
-                print_every, save_every, dropout, loadFilename=None, attn_model='dot', decoder_learning_ratio=5.0):
-
+               print_every, save_every, dropout, loadFilename=None, attn_model='dot', decoder_learning_ratio=5.0):
     voc, pairs = loadPrepareData(corpus)
 
     # training data
@@ -159,7 +179,7 @@ def trainIters(corpus, reverse, n_iteration, learning_rate, batch_size, n_layers
     except FileNotFoundError:
         print('Training pairs not found, generating ...')
         training_batches = [batch2TrainData(voc, [random.choice(pairs) for _ in range(batch_size)], reverse)
-                          for _ in range(n_iteration)]
+                            for _ in range(n_iteration)]
         torch.save(training_batches, os.path.join(save_dir, 'training_data', corpus_name,
                                                   '{}_{}_{}.tar'.format(n_iteration, \
                                                                         filename(reverse, 'training_batches'), \
@@ -178,6 +198,18 @@ def trainIters(corpus, reverse, n_iteration, learning_rate, batch_size, n_layers
     # use cuda
     encoder = encoder.to(device)
     decoder = decoder.to(device)
+
+    # MutilGPU
+    # 使用多个GPU的原理就是:
+    # 1. 通过下面代码将model在每个GPU上分别保存一份，然后对model的输入tensor进行自动的分割，每个GPU计算tensor的一部分，这样就能实现计算量的平均分配。
+    # 2. 在每个model计算完成之后，DataParallel将这些结果进行收集和融合，之后再将结果返回。
+    if torch.cuda.device_count() > 1:
+        print("Let's use ", torch.cuda.device_count(), " GPUs!")
+        encoder = nn.DataParallel(encoder)
+        decoder = nn.DataParallel(decoder)
+
+    # encoder.to(device)
+    # decoder.to(device)
 
     # optimizer
     print('Building optimizers ...')
